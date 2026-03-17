@@ -150,5 +150,40 @@
     "velocity": [0.0, 1.79e4, 0.0],
     "radius": 4.73e5,
     "color": [0.6, 0.4, 0.3]
+  },
+  {
+    "name": "Pluto",
+    "mass": 1.303e22,
+    "position": [5.9064e12, 0.0, 0.0],
+    "velocity": [0.0, 4.74e3, 0.0],
+    "radius": 1.188e6,
+    "color": [0.75, 0.65, 0.55]
+  },
+  {
+    "name": "Charon",
+    "mass": 1.586e21,
+    "relative_to": "Pluto",
+    "relative_position": [1.9591e7, 0.0, 0.0],
+    "relative_velocity": [0.0, 210.0, 0.0],
+    "radius": 6.06e5,
+    "color": [0.55, 0.55, 0.55]
+  },
+  {
+    "name": "Triton",
+    "mass": 2.139e22,
+    "relative_to": "Neptune",
+    "relative_position": [3.54759e8, 0.0, 0.0],
+    "relative_velocity": [0.0, 4390.0, 0.0],
+    "radius": 1.3534e6,
+    "color": [0.45, 0.6, 0.95]
+  },
+  {
+    "name": "Enceladus",
+    "mass": 1.08022e20,
+    "relative_to": "Saturn",
+    "relative_position": [2.37948e8, 0.0, 0.0],
+    "relative_velocity": [0.0, 12630.0, 0.0],
+    "radius": 2.52e5,
+    "color": [0.95, 0.95, 1.0]
   }
 ]
