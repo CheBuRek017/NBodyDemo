@@ -56,29 +56,29 @@ class OctreeNode:
         self.is_leaf = True
         self.body = None
 
-    def _get_octant(self, pos):
-        idx = 0
-        if pos[0] >= self.center[0]:
-            idx |= 1
-        if pos[1] >= self.center[1]:
-            idx |= 2
-        if pos[2] >= self.center[2]:
-            idx |= 4
-        return idx
+    def _get_octant(self, position):
+        octant_index = 0
+        if position[0] >= self.center[0]:
+            octant_index |= 1
+        if position[1] >= self.center[1]:
+            octant_index |= 2
+        if position[2] >= self.center[2]:
+            octant_index |= 4
+        return octant_index
 
     def _subdivide(self):
         quarter = self.size / 4.0
         half_size = self.size / 2.0
-        for i in range(8):
-            dx = quarter if (i & 1) else -quarter
-            dy = quarter if (i & 2) else -quarter
-            dz = quarter if (i & 4) else -quarter
-            child_center = self.center + np.array([dx, dy, dz], dtype=np.float64)
-            self.children[i] = OctreeNode(child_center, half_size)
+        for octant_index in range(8):
+            x_offset = quarter if (octant_index & 1) else -quarter
+            y_offset = quarter if (octant_index & 2) else -quarter
+            z_offset = quarter if (octant_index & 4) else -quarter
+            child_center = self.center + np.array([x_offset, y_offset, z_offset], dtype=np.float64)
+            self.children[octant_index] = OctreeNode(child_center, half_size)
 
     def _insert_to_child(self, body):
-        idx = self._get_octant(body.pos)
-        self.children[idx].insert(body)
+        octant_index = self._get_octant(body.pos)
+        self.children[octant_index].insert(body)
 
     def insert(self, body):
         if self.mass == 0.0:  # empty leaf
@@ -111,24 +111,24 @@ class OctreeNode:
         if self.is_leaf and self.body is body:
             return np.zeros(3, dtype=np.float64)
 
-        dist_vec = self.com - body.pos
-        dist_sq = np.dot(dist_vec, dist_vec)
-        if dist_sq < 1e6:  # soft collision avoidance
+        com_to_body_vector = self.com - body.pos
+        distance_squared = np.dot(com_to_body_vector, com_to_body_vector)
+        if distance_squared < 1e6:  # soft collision avoidance
             return np.zeros(3, dtype=np.float64)
-        dist = np.sqrt(dist_sq)
+        distance = np.sqrt(distance_squared)
 
         # Barnes–Hut criterion or leaf → approximate (or exact for leaf)
-        if self.is_leaf or (self.size / dist < theta):
-            inv_dist3 = 1.0 / (dist_sq * dist)
-            acc = G * self.mass * dist_vec * inv_dist3
-            return acc
+        if self.is_leaf or (self.size / distance < theta):
+            inverse_distance_cubed = 1.0 / (distance_squared * distance)
+            acceleration = G * self.mass * com_to_body_vector * inverse_distance_cubed
+            return acceleration
         else:
             # recurse into children
-            acc = np.zeros(3, dtype=np.float64)
+            total_acceleration = np.zeros(3, dtype=np.float64)
             for child in self.children:
                 if child is not None:
-                    acc += child.compute_force(body, theta, G)
-            return acc
+                    total_acceleration += child.compute_force(body, theta, G)
+            return total_acceleration
 
 
 # -------------------------------------------------
@@ -149,37 +149,37 @@ class Body:
 # Vectorized gravity replaced by Barnes–Hut
 # -------------------------------------------------
 def compute_accelerations(bodies):
-    n = len(bodies)
-    if n < 2:
+    num_bodies = len(bodies)
+    if num_bodies < 2:
         return [np.zeros(3, dtype=np.float64) for _ in bodies]
 
-    pos_arr = np.stack([b.pos for b in bodies])
-    minp = np.min(pos_arr, axis=0)
-    maxp = np.max(pos_arr, axis=0)
-    center = (minp + maxp) / 2
-    extent = np.max(maxp - minp)
-    size = max(extent * 1.2, 1e9)
+    positions_array = np.stack([b.pos for b in bodies])
+    min_position = np.min(positions_array, axis=0)
+    max_position = np.max(positions_array, axis=0)
+    tree_center = (min_position + max_position) / 2
+    max_extent = np.max(max_position - min_position)
+    tree_size = max(max_extent * 1.2, 1e9)
 
-    root = OctreeNode(center, size)
-    for b in bodies:
-        root.insert(b)
+    root = OctreeNode(tree_center, tree_size)
+    for body in bodies:
+        root.insert(body)
 
-    acc_list = []
-    for b in bodies:
-        acc = root.compute_force(b, theta=0.5, G=G)
-        acc_list.append(acc)
-    return acc_list
+    acceleration_list = []
+    for body in bodies:
+        acceleration = root.compute_force(body, theta=0.5, G=G)
+        acceleration_list.append(acceleration)
+    return acceleration_list
 
 
-def step_leapfrog(bodies, dt):
-    accs = compute_accelerations(bodies)
-    for b, a in zip(bodies, accs):
-        b.vel += 0.5 * a * dt
-    for b in bodies:
-        b.pos += b.vel * dt
-    accs = compute_accelerations(bodies)
-    for b, a in zip(bodies, accs):
-        b.vel += 0.5 * a * dt
+def step_leapfrog(bodies, timestep):
+    accelerations = compute_accelerations(bodies)
+    for body, acceleration in zip(bodies, accelerations):
+        body.vel += 0.5 * acceleration * timestep
+    for body in bodies:
+        body.pos += body.vel * timestep
+    accelerations = compute_accelerations(bodies)
+    for body, acceleration in zip(bodies, accelerations):
+        body.vel += 0.5 * acceleration * timestep
 
 
 # -------------------------------------------------
@@ -210,19 +210,19 @@ class Renderer:
         self.bodies = bodies
         self.max_trail_len = 3000
 
-        for b in self.bodies:
-            b.trail = deque(maxlen=self.max_trail_len)
+        for body in self.bodies:
+            body.trail = deque(maxlen=self.max_trail_len)
 
         # Camera & state
-        max_dist = max(np.linalg.norm(b.pos) for b in bodies)
-        self.cam_pos = np.array([0.0, 0.0, max_dist * 2.0], dtype=np.float64)
+        max_distance = max(np.linalg.norm(b.pos) for b in bodies)
+        self.cam_pos = np.array([0.0, 0.0, max_distance * 2.0], dtype=np.float64)
         self.yaw = -90.0
         self.pitch = 0.0
         self.cam_front = np.array([0.0, 0.0, -1.0], dtype=np.float64)
         self.cam_up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
 
-        self.last_x = width / 2
-        self.last_y = height / 2
+        self.previous_mouse_x = width / 2
+        self.previous_mouse_y = height / 2
         self.first_mouse = True
         self.keys = {}
 
@@ -238,19 +238,19 @@ class Renderer:
         self.paused = False
         self.show_help = True
 
-        self.current_dt = 3600.0
+        self.current_timestep = 3600.0
 
         # FPS
         self.fps = 60.0
         self.frame_count = 0
-        self.last_fps_time = glfw.get_time()
+        self.last_fps_update_time = glfw.get_time()
 
         self.fov_factor = height / (2.0 * math.tan(math.radians(22.5)))
 
     # -------------------------------------------------
     # Input
     # -------------------------------------------------
-    def _on_key(self, win, key, scancode, action, mods):
+    def _on_key(self, window, key, scancode, action, mods):
         pressed = action != glfw.RELEASE
         self.keys[key] = pressed
         if action == glfw.PRESS:
@@ -269,24 +269,24 @@ class Renderer:
             if key == glfw.KEY_ESCAPE:
                 glfw.set_window_should_close(self.window, True)
 
-    def _on_mouse(self, win, xpos, ypos):
+    def _on_mouse(self, window, mouse_x, mouse_y):
         if self.first_mouse:
-            self.last_x = xpos
-            self.last_y = ypos
+            self.previous_mouse_x = mouse_x
+            self.previous_mouse_y = mouse_y
             self.first_mouse = False
-        xoff = xpos - self.last_x
-        yoff = self.last_y - ypos
-        self.last_x = xpos
-        self.last_y = ypos
-        sens = 0.1
+        mouse_delta_x = mouse_x - self.previous_mouse_x
+        mouse_delta_y = self.previous_mouse_y - mouse_y
+        self.previous_mouse_x = mouse_x
+        self.previous_mouse_y = mouse_y
+        mouse_sensitivity = 0.1
         if self.mode == 'free':
-            self.yaw += xoff * sens
-            self.pitch += yoff * sens
+            self.yaw += mouse_delta_x * mouse_sensitivity
+            self.pitch += mouse_delta_y * mouse_sensitivity
             self.pitch = max(-89.0, min(89.0, self.pitch))
             self._update_cam_front()
         else:
-            self.orbit_yaw += xoff * sens
-            self.orbit_pitch += yoff * sens
+            self.orbit_yaw += mouse_delta_x * mouse_sensitivity
+            self.orbit_pitch += mouse_delta_y * mouse_sensitivity
             self.orbit_pitch = max(-89.0, min(89.0, self.orbit_pitch))
 
     def _update_cam_front(self):
@@ -297,36 +297,36 @@ class Renderer:
         ], dtype=np.float64)
         self.cam_front /= np.linalg.norm(self.cam_front)
 
-    def _on_mouse_button(self, win, button, action, mods):
+    def _on_mouse_button(self, window, button, action, mods):
         if button == glfw.MOUSE_BUTTON_LEFT and action == glfw.PRESS and self.mode == 'free':
             self._select_body_at_center()
 
-    def _on_scroll(self, win, xoffset, yoffset):
+    def _on_scroll(self, window, scroll_x, scroll_y):
         if self.mode == 'orbit' and self.focused_body:
-            factor = 0.9 if yoffset > 0 else 1.11
-            self.orbit_distance *= factor
+            zoom_factor = 0.9 if scroll_y > 0 else 1.11
+            self.orbit_distance *= zoom_factor
             self.orbit_distance = max(5 * self.focused_body.radius, self.orbit_distance)
 
     def _select_body_at_center(self):
         model = glGetDoublev(GL_MODELVIEW_MATRIX)
         proj = glGetDoublev(GL_PROJECTION_MATRIX)
         viewport = glGetIntegerv(GL_VIEWPORT)
-        cx, cy = self.width / 2, self.height / 2
-        closest = None
-        min_dist = float('inf')
-        for b in self.bodies:
-            wx, wy, wz = gluProject(b.pos[0], b.pos[1], b.pos[2], model, proj, viewport)
-            if not (0 < wz < 1):
+        screen_center_x, screen_center_y = self.width / 2, self.height / 2
+        closest_body = None
+        min_screen_distance = float('inf')
+        for body in self.bodies:
+            projected_x, projected_y, projected_z = gluProject(body.pos[0], body.pos[1], body.pos[2], model, proj, viewport)
+            if not (0 < projected_z < 1):
                 continue
-            d = math.hypot(wx - cx, wy - cy)
-            if d < min_dist:
-                min_dist = d
-                closest = b
-        if closest and min_dist < 80:
-            self.focused_body = closest
+            screen_distance = math.hypot(projected_x - screen_center_x, projected_y - screen_center_y)
+            if screen_distance < min_screen_distance:
+                min_screen_distance = screen_distance
+                closest_body = body
+        if closest_body and min_screen_distance < 80:
+            self.focused_body = closest_body
             self.mode = 'orbit'
-            cur = np.linalg.norm(self.cam_pos - closest.pos)
-            self.orbit_distance = max(5 * closest.radius, cur * 0.6)
+            current_distance = np.linalg.norm(self.cam_pos - closest_body.pos)
+            self.orbit_distance = max(5 * closest_body.radius, current_distance * 0.6)
             self.orbit_yaw = self.yaw
             self.orbit_pitch = self.pitch
 
@@ -334,55 +334,55 @@ class Renderer:
     # Adaptive timestep (Hill-sphere style)
     # -------------------------------------------------
     def _compute_adaptive_dt(self):
-        n = len(self.bodies)
-        if n < 2:
+        num_bodies = len(self.bodies)
+        if num_bodies < 2:
             return 3600.0
-        pos = np.stack([b.pos for b in self.bodies])
-        mass = np.array([b.mass for b in self.bodies], dtype=np.float64)
-        dx = pos[None, :, :] - pos[:, None, :]
-        dist_sq = np.sum(dx ** 2, axis=-1)
-        dist = np.sqrt(dist_sq)
-        i, j = np.triu_indices(n, k=1)
-        d_ij = dist[i, j]
-        msum = mass[i] + mass[j]
-        tscales = np.sqrt(d_ij ** 3 / (G * msum + 1e-30))
-        min_t = np.min(tscales)
-        eta = 0.02
-        return eta * min_t
+        body_positions = np.stack([b.pos for b in self.bodies])
+        body_masses = np.array([b.mass for b in self.bodies], dtype=np.float64)
+        relative_positions = body_positions[None, :, :] - body_positions[:, None, :]
+        pairwise_distance_squared = np.sum(relative_positions ** 2, axis=-1)
+        pairwise_distances = np.sqrt(pairwise_distance_squared)
+        pair_index_1, pair_index_2 = np.triu_indices(num_bodies, k=1)
+        pair_distances = pairwise_distances[pair_index_1, pair_index_2]
+        pairwise_mass_sums = body_masses[pair_index_1] + body_masses[pair_index_2]
+        orbital_timescales = np.sqrt(pair_distances ** 3 / (G * pairwise_mass_sums + 1e-30))
+        min_orbital_timescale = np.min(orbital_timescales)
+        safety_factor = 0.02
+        return safety_factor * min_orbital_timescale
 
     # -------------------------------------------------
     # Movement
     # -------------------------------------------------
-    def _process_keyboard(self, dt):
+    def _process_keyboard(self, frame_delta_time):
         if self.mode != 'free':
             return
-        speed = 3e11 * dt * (5.0 if self.keys.get(glfw.KEY_R, False) else 1.0)
+        camera_speed = 3e11 * frame_delta_time * (5.0 if self.keys.get(glfw.KEY_R, False) else 1.0)
         if self.keys.get(glfw.KEY_W, False):
-            self.cam_pos += speed * self.cam_front
+            self.cam_pos += camera_speed * self.cam_front
         if self.keys.get(glfw.KEY_S, False):
-            self.cam_pos -= speed * self.cam_front
+            self.cam_pos -= camera_speed * self.cam_front
         right = np.cross(self.cam_front, self.cam_up)
         right /= np.linalg.norm(right)
         if self.keys.get(glfw.KEY_A, False):
-            self.cam_pos -= speed * right
+            self.cam_pos -= camera_speed * right
         if self.keys.get(glfw.KEY_D, False):
-            self.cam_pos += speed * right
+            self.cam_pos += camera_speed * right
 
     def _update_trails(self):
-        for b in self.bodies:
-            b.trail.append(b.pos.copy())
+        for body in self.bodies:
+            body.trail.append(body.pos.copy())
 
     def _update_window_title(self):
-        step_sec = self.current_dt
-        if step_sec < 60:
-            step_str = f"{step_sec:.1f} s"
-        elif step_sec < 3600:
-            step_str = f"{step_sec/60:.1f} min"
-        elif step_sec < 86400:
-            step_str = f"{step_sec/3600:.1f} h"
+        timestep_seconds = self.current_timestep
+        if timestep_seconds < 60:
+            timestep_string = f"{timestep_seconds:.1f} s"
+        elif timestep_seconds < 3600:
+            timestep_string = f"{timestep_seconds/60:.1f} min"
+        elif timestep_seconds < 86400:
+            timestep_string = f"{timestep_seconds/3600:.1f} h"
         else:
-            step_str = f"{step_sec/86400:.1f} d"
-        title = f"Minimal N‑Body – {step_str} (×{self.timescale:.2g}) | {self.fps:.0f} FPS"
+            timestep_string = f"{timestep_seconds/86400:.1f} d"
+        title = f"Minimal N‑Body – {timestep_string} (×{self.timescale:.2g}) | {self.fps:.0f} FPS"
         if self.paused:
             title += " [PAUSED]"
         if self.mode == 'orbit' and self.focused_body:
@@ -395,24 +395,24 @@ class Renderer:
     def _draw_3d(self):
         if self.trails:
             glLineWidth(1.5)
-            for b in self.bodies:
-                n = len(b.trail)
-                if n < 2:
+            for body in self.bodies:
+                trail_length = len(body.trail)
+                if trail_length < 2:
                     continue
-                trail_array = np.asarray(b.trail, dtype=np.float32)
+                trail_array = np.asarray(body.trail, dtype=np.float32)
                 glEnableClientState(GL_VERTEX_ARRAY)
-                glColor3f(*b.color)
+                glColor3f(*body.color)
                 glVertexPointer(3, GL_FLOAT, 0, trail_array)
-                glDrawArrays(GL_LINE_STRIP, 0, n)
+                glDrawArrays(GL_LINE_STRIP, 0, trail_length)
                 glDisableClientState(GL_VERTEX_ARRAY)
 
-        for b in self.bodies:
-            dist = max(1e6, np.linalg.norm(b.pos - self.cam_pos))
-            size = max(3.0, min(40.0, (b.radius / dist) * self.fov_factor * 250.0))
+        for body in self.bodies:
+            distance = max(1e6, np.linalg.norm(body.pos - self.cam_pos))
+            size = max(3.0, min(40.0, (body.radius / distance) * self.fov_factor * 250.0))
             glPointSize(size)
             glBegin(GL_POINTS)
-            glColor3f(*b.color)
-            glVertex3f(*b.pos)
+            glColor3f(*body.color)
+            glVertex3f(*body.pos)
             glEnd()
 
     def _draw_hud(self, model, proj, viewport):
@@ -428,42 +428,42 @@ class Renderer:
 
         # Crosshair
         if self.mode == 'free':
-            cx, cy = self.width / 2, self.height / 2
+            screen_center_x, screen_center_y = self.width / 2, self.height / 2
             glLineWidth(1.5)
             glBegin(GL_LINES)
-            glVertex2f(cx - 15, cy)
-            glVertex2f(cx + 15, cy)
-            glVertex2f(cx, cy - 15)
-            glVertex2f(cx, cy + 15)
+            glVertex2f(screen_center_x - 15, screen_center_y)
+            glVertex2f(screen_center_x + 15, screen_center_y)
+            glVertex2f(screen_center_x, screen_center_y - 15)
+            glVertex2f(screen_center_x, screen_center_y + 15)
             glEnd()
 
         # Labels – small bodies hidden unless zoomed in
         if self.show_labels:
-            for b in self.bodies:
-                if b.radius < 1e6:
-                    cam_dist = np.linalg.norm(b.pos - self.cam_pos)
+            for body in self.bodies:
+                if body.radius < 1e6:
+                    cam_dist = np.linalg.norm(body.pos - self.cam_pos)
                     if cam_dist > 5e9:
                         continue
-                wx, wy, wz = gluProject(b.pos[0], b.pos[1], b.pos[2], model, proj, viewport)
-                if not (0 < wz < 1):
+                projected_x, projected_y, projected_z = gluProject(body.pos[0], body.pos[1], body.pos[2], model, proj, viewport)
+                if not (0 < projected_z < 1):
                     continue
-                glRasterPos2f(wx + 8, wy + 15)
-                for char in b.name:
+                glRasterPos2f(projected_x + 8, projected_y + 15)
+                for char in body.name:
                     glutBitmapCharacter(GLUT_BITMAP_9_BY_15, ord(char))
 
         # Help overlay (open by default)
         if self.show_help:
-            lines = ["=== CONTROLS ===", "Left-click/crosshair : select + orbit", "Mouse drag           : orbit selected",
-                     "Mouse wheel          : zoom", "WASD (in orbit)      : back to free flight",
-                     "Space                : pause/resume", "T                    : trails",
-                     "+ / -                : timescale", "L                    : labels",
-                     "H                    : toggle help", "Esc                  : quit"]
-            y = self.height - 40
-            for line in lines:
-                glRasterPos2f(30, y)
-                for char in line:
+            help_text_lines = ["=== CONTROLS ===", "Left-click/crosshair : select + orbit", "Mouse drag           : orbit selected",
+                               "Mouse wheel          : zoom", "WASD (in orbit)      : back to free flight",
+                               "Space                : pause/resume", "T                    : trails",
+                               "+ / -                : timescale", "L                    : labels",
+                               "H                    : toggle help", "Esc                  : quit"]
+            current_text_y = self.height - 40
+            for help_line in help_text_lines:
+                glRasterPos2f(30, current_text_y)
+                for char in help_line:
                     glutBitmapCharacter(GLUT_BITMAP_9_BY_15, ord(char))
-                y -= 18
+                current_text_y -= 18
 
         glEnable(GL_DEPTH_TEST)
         glPopMatrix()
@@ -495,16 +495,16 @@ class Renderer:
     # Main loop
     # -------------------------------------------------
     def run(self):
-        prev_time = glfw.get_time()
+        previous_frame_time = glfw.get_time()
         while not glfw.window_should_close(self.window):
-            now = glfw.get_time()
-            frame_dt = now - prev_time
-            prev_time = now
+            current_frame_time = glfw.get_time()
+            frame_delta_time = current_frame_time - previous_frame_time
+            previous_frame_time = current_frame_time
 
             glfw.poll_events()
 
             if self.mode == 'free':
-                self._process_keyboard(frame_dt)
+                self._process_keyboard(frame_delta_time)
             elif self.mode == 'orbit' and self.focused_body:
                 if any(self.keys.get(k, False) for k in (glfw.KEY_W, glfw.KEY_A, glfw.KEY_S, glfw.KEY_D)):
                     self.mode = 'free'
@@ -514,29 +514,29 @@ class Renderer:
                     self._update_cam_front()
 
             if self.mode == 'orbit' and self.focused_body:
-                rx = self.orbit_distance * math.cos(math.radians(self.orbit_pitch)) * math.cos(math.radians(self.orbit_yaw))
-                ry = self.orbit_distance * math.sin(math.radians(self.orbit_pitch))
-                rz = self.orbit_distance * math.cos(math.radians(self.orbit_pitch)) * math.sin(math.radians(self.orbit_yaw))
-                offset = np.array([rx, ry, rz], dtype=np.float64)
+                x_offset = self.orbit_distance * math.cos(math.radians(self.orbit_pitch)) * math.cos(math.radians(self.orbit_yaw))
+                y_offset = self.orbit_distance * math.sin(math.radians(self.orbit_pitch))
+                z_offset = self.orbit_distance * math.cos(math.radians(self.orbit_pitch)) * math.sin(math.radians(self.orbit_yaw))
+                offset = np.array([x_offset, y_offset, z_offset], dtype=np.float64)
                 self.cam_pos = self.focused_body.pos + offset
                 self.cam_front = -offset / self.orbit_distance
 
             # Hill-sphere adaptive timestep (always computed for title)
-            adaptive_base = self._compute_adaptive_dt()
-            dt = adaptive_base * self.timescale
+            base_adaptive_timestep = self._compute_adaptive_dt()
+            simulation_timestep = base_adaptive_timestep * self.timescale
             if not self.paused:
-                step_leapfrog(self.bodies, dt)
+                step_leapfrog(self.bodies, simulation_timestep)
                 self._update_trails()
-            self.current_dt = dt
+            self.current_timestep = simulation_timestep
 
             self._draw()
             glfw.swap_buffers(self.window)
 
             self.frame_count += 1
-            if now - self.last_fps_time > 1.0:
-                self.fps = self.frame_count / (now - self.last_fps_time)
+            if current_frame_time - self.last_fps_update_time > 1.0:
+                self.fps = self.frame_count / (current_frame_time - self.last_fps_update_time)
                 self.frame_count = 0
-                self.last_fps_time = now
+                self.last_fps_update_time = current_frame_time
 
         glfw.terminate()
 
@@ -557,28 +557,28 @@ bodies = [
     Body("Neptune", 1.02413e26, [4.4951e12, 0.0, 0.0],   [0.0, 5.4e3, 0.0],        2.4622e7, (0.4, 0.6, 1.0)),
 ]
 
-jup = bodies[6]
+jupiter = bodies[6]
 bodies.extend([
-    Body("Io",       8.9319e22, jup.pos + np.array([4.2170e8, 0.0, 0.0]), jup.vel + np.array([0.0, 1.7334e4, 0.0]), 1.8216e6, (1.0, 0.8, 0.6)),
-    Body("Europa",   4.7998e22, jup.pos + np.array([6.7090e8, 0.0, 0.0]), jup.vel + np.array([0.0, 1.3740e4, 0.0]), 1.5608e6, (0.8, 0.9, 1.0)),
-    Body("Ganymede", 1.4819e23, jup.pos + np.array([1.0704e9, 0.0, 0.0]), jup.vel + np.array([0.0, 1.0880e4, 0.0]), 2.631e6,   (0.7, 0.7, 0.7)),
-    Body("Callisto", 1.0759e23, jup.pos + np.array([1.8827e9, 0.0, 0.0]), jup.vel + np.array([0.0, 8.204e3,  0.0]), 2.410e6,   (0.6, 0.6, 0.6)),
+    Body("Io",       8.9319e22, jupiter.pos + np.array([4.2170e8, 0.0, 0.0]), jupiter.vel + np.array([0.0, 1.7334e4, 0.0]), 1.8216e6, (1.0, 0.8, 0.6)),
+    Body("Europa",   4.7998e22, jupiter.pos + np.array([6.7090e8, 0.0, 0.0]), jupiter.vel + np.array([0.0, 1.3740e4, 0.0]), 1.5608e6, (0.8, 0.9, 1.0)),
+    Body("Ganymede", 1.4819e23, jupiter.pos + np.array([1.0704e9, 0.0, 0.0]), jupiter.vel + np.array([0.0, 1.0880e4, 0.0]), 2.631e6,   (0.7, 0.7, 0.7)),
+    Body("Callisto", 1.0759e23, jupiter.pos + np.array([1.8827e9, 0.0, 0.0]), jupiter.vel + np.array([0.0, 8.204e3,  0.0]), 2.410e6,   (0.6, 0.6, 0.6)),
 ])
-sat = bodies[7]
-bodies.append(Body("Titan", 1.3452e23, sat.pos + np.array([1.2219e9, 0.0, 0.0]), sat.vel + np.array([0.0, 5.57e3, 0.0]), 2.575e6, (0.8, 0.8, 0.7)))
-mars = bodies[5]
+saturn = bodies[7]
+bodies.append(Body("Titan", 1.3452e23, saturn.pos + np.array([1.2219e9, 0.0, 0.0]), saturn.vel + np.array([0.0, 5.57e3, 0.0]), 2.575e6, (0.8, 0.8, 0.7)))
+mars_body = bodies[5]
 bodies.extend([
-    Body("Phobos", 1.0659e16, mars.pos + np.array([9.377e6, 0.0, 0.0]), mars.vel + np.array([0.0, 2.138e3, 0.0]), 1.13e4, (0.5, 0.5, 0.5)),
-    Body("Deimos", 1.4762e15, mars.pos + np.array([2.346e7, 0.0, 0.0]), mars.vel + np.array([0.0, 1.351e3, 0.0]), 6.2e3,  (0.6, 0.6, 0.6)),
+    Body("Phobos", 1.0659e16, mars_body.pos + np.array([9.377e6, 0.0, 0.0]), mars_body.vel + np.array([0.0, 2.138e3, 0.0]), 1.13e4, (0.5, 0.5, 0.5)),
+    Body("Deimos", 1.4762e15, mars_body.pos + np.array([2.346e7, 0.0, 0.0]), mars_body.vel + np.array([0.0, 1.351e3, 0.0]), 6.2e3,  (0.6, 0.6, 0.6)),
 ])
 bodies.append(Body("Ceres", 9.3835e20, [4.14e11, 0.0, 0.0], [0.0, 1.79e4, 0.0], 4.73e5, (0.6, 0.4, 0.3)))
 
-total_mass = sum(b.mass for b in bodies)
-cm = sum(b.mass * b.pos for b in bodies) / total_mass
-for b in bodies:
-    b.pos -= cm
-total_mom = sum(b.mass * b.vel for b in bodies)
-bodies[0].vel = -total_mom / bodies[0].mass
+total_mass = sum(body.mass for body in bodies)
+center_of_mass = sum(body.mass * body.pos for body in bodies) / total_mass
+for body in bodies:
+    body.pos -= center_of_mass
+total_momentum = sum(body.mass * body.vel for body in bodies)
+bodies[0].vel = -total_momentum / bodies[0].mass
 
 
 if __name__ == "__main__":
