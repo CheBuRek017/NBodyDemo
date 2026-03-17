@@ -5,7 +5,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.1.0",
     "glfw>=2.7.0",
-    "PyOpenGL>=3.1.7"
+    "PyOpenGL>=3.1.7",
     "PyOpenGL-accelerate>=3.1.7"
 ]
 
