@@ -9,4 +9,5 @@ class Body:
         self.vel = np.array(velocity, dtype=np.float64)
         self.radius = radius
         self.color = color
-        self.trail = None  # set by Renderer
+        self.trail = None
+        self.trail_times = None
