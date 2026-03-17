@@ -1,10 +1,14 @@
 import math
 import sys
 import numpy as np
+
 import glfw
 from OpenGL.GL import *
 from OpenGL.GLU import gluPerspective, gluLookAt, gluProject, gluOrtho2D
 from collections import deque
+
+from .simulator import Simulator
+from .body import Body
 
 # GLUT for labels
 try:
@@ -18,7 +22,7 @@ from .integrator import step_leapfrog, G
 from .body import Body
 
 class Renderer:
-    def __init__(self, bodies, width=1000, height=700):
+    def __init__(self, simulator: Simulator, width=1000, height=700):
         if not glfw.init():
             raise RuntimeError("GLFW init failed")
         self.width, self.height = width, height
@@ -39,14 +43,11 @@ class Renderer:
         if GLUT_AVAILABLE:
             glutInit(sys.argv)
 
-        self.bodies = bodies
-        self.max_trail_len = 3000
-
-        for body in self.bodies:
-            body.trail = deque(maxlen=self.max_trail_len)
+        self.simulator = simulator
+        self.bodies = simulator.bodies
 
         # Camera & state
-        max_distance = max(np.linalg.norm(b.pos) for b in bodies)
+        max_distance = max(np.linalg.norm(b.pos) for b in self.bodies)
         self.cam_pos = np.array([0.0, 0.0, max_distance * 2.0], dtype=np.float64)
         self.yaw = -90.0
         self.pitch = 0.0
@@ -226,18 +227,17 @@ class Renderer:
     # -------------------------------------------------
     def _draw_3d(self):
         if self.trails:
-            glLineWidth(1.5)
-            for body in self.bodies:
-                trail_length = len(body.trail)
-                if trail_length < 2:
-                    continue
-                trail_array = np.asarray(body.trail, dtype=np.float32)
-                glEnableClientState(GL_VERTEX_ARRAY)
-                glColor3f(*body.color)
-                glVertexPointer(3, GL_FLOAT, 0, trail_array)
-                glDrawArrays(GL_LINE_STRIP, 0, trail_length)
-                glDisableClientState(GL_VERTEX_ARRAY)
-
+            if self.trails:
+                glLineWidth(1.5)
+                for body in self.bodies:
+                    if len(body.trail) < 2:
+                        continue
+                    trail_array = np.asarray(body.trail, dtype=np.float32)
+                    glEnableClientState(GL_VERTEX_ARRAY)
+                    glColor3f(*body.color)
+                    glVertexPointer(3, GL_FLOAT, 0, trail_array)
+                    glDrawArrays(GL_LINE_STRIP, 0, len(body.trail))
+                    glDisableClientState(GL_VERTEX_ARRAY)
         for body in self.bodies:
             distance = max(1e6, np.linalg.norm(body.pos - self.cam_pos))
             size = max(3.0, min(40.0, (body.radius / distance) * self.fov_factor * 250.0))
@@ -272,10 +272,10 @@ class Renderer:
         # Labels – small bodies hidden unless zoomed in
         if self.show_labels:
             for body in self.bodies:
-                if body.radius < 1e6:
-                    cam_dist = np.linalg.norm(body.pos - self.cam_pos)
-                    if cam_dist > 5e9:
-                        continue
+                cam_dist = np.linalg.norm(body.pos - self.cam_pos)
+                # Planets (radius >= 5e6) always shown. Moons hide when far.
+                if body.radius < 5e6 and cam_dist > 5e9:
+                    continue
                 projected_x, projected_y, projected_z = gluProject(body.pos[0], body.pos[1], body.pos[2], model, proj, viewport)
                 if not (0 < projected_z < 1):
                     continue
@@ -354,11 +354,10 @@ class Renderer:
                 self.cam_front = -offset / self.orbit_distance
 
             # Hill-sphere adaptive timestep (always computed for title)
-            base_adaptive_timestep = self._compute_adaptive_dt()
+            base_adaptive_timestep = self.simulator.compute_adaptive_dt()
             simulation_timestep = base_adaptive_timestep * self.timescale
             if not self.paused:
-                step_leapfrog(self.bodies, simulation_timestep)
-                self._update_trails()
+                self.simulator.step(simulation_timestep)
             self.current_timestep = simulation_timestep
 
             self._draw()
