@@ -1,0 +1,14 @@
+LICENSE
+README.md
+pyproject.toml
+src/nbodydemo/bodies_config.py
+src/nbodydemo/body.py
+src/nbodydemo/integrator.py
+src/nbodydemo/octree.py
+src/nbodydemo/renderer.py
+src/nbodydemo/simulator.py
+src/nbodydemo.egg-info/PKG-INFO
+src/nbodydemo.egg-info/SOURCES.txt
+src/nbodydemo.egg-info/dependency_links.txt
+src/nbodydemo.egg-info/requires.txt
+src/nbodydemo.egg-info/top_level.txt
